@@ -131,8 +131,7 @@ end
 
 local function firePrompt(prompt)
     if not prompt or not prompt:IsA("ProximityPrompt") then return end
-    prompt:InputHoldBegin()
-    prompt:InputHoldEnd()
+    fireproximityprompt(prompt)
 end
 
 local function spamPrompt(prompt)
@@ -427,3 +426,4 @@ player.CharacterAdded:Connect(function(char)
 end)
 
 print("[AUTO] Loaded")
+
