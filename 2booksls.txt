@@ -1,0 +1,94 @@
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+local isRunning = false
+local currentConnection
+
+-- Helper: Find tool in backpack or character
+local function findTool(name)
+    local char = player.Character
+    local backpack = player:FindFirstChild("Backpack")
+    if not char or not backpack then return nil end
+    return char:FindFirstChild(name) or backpack:FindFirstChild(name)
+end
+
+-- Helper: Equip tool
+local function equip(name)
+    local char = player.Character
+    local tool = findTool(name)
+    if not char or not tool then return false end
+    
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid:EquipTool(tool)
+        return tool
+    end
+    return false
+end
+
+-- Helper: Unequip all
+local function unequip()
+    local char = player.Character
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid:UnequipTools()
+    end
+end
+
+-- Main cycle loop
+local function startCycle()
+    while isRunning do
+        if not isRunning then break end
+        
+        -- Engineering Book Sequence
+        local eng = equip("Engineering Book")
+        if eng then
+            task.wait(0.05) -- Small delay for equip to register
+            if isRunning then
+                eng:Activate()
+                task.wait(0.1)  -- Wait after activation
+                unequip()
+                task.wait(1)  -- Wait before next book
+            end
+        else
+            warn("Engineering Book not found!")
+            task.wait(1)
+        end
+        
+        if not isRunning then break end
+        
+        -- History Book Sequence  
+        local hist = equip("History Book")
+        if hist then
+            task.wait(0.05) -- Small delay for equip to register
+            if isRunning then
+                hist:Activate()
+                task.wait(0.1)
+                unequip()
+                task.wait(1)
+            end
+        else
+            warn("History Book not found!")
+            task.wait(1)
+        end
+    end
+    unequip() -- Cleanup when stopped
+end
+
+-- Toggle on K press
+currentConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.K then
+        isRunning = not isRunning
+        if isRunning then
+            print("▶ Book cycle started (Eng → Hist loop)")
+            task.spawn(startCycle)
+        else
+            print("■ Book cycle stopped")
+        end
+    end
+end)
+
+print("Press [K] to toggle book reading automation")
