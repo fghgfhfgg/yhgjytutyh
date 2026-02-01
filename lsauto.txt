@@ -12,7 +12,7 @@ local CONFIG = {
     LOAD_DISTANCE_THRESHOLD = 200,
     LOAD_WAIT_TIME = 1,
     BUTTON_MONEY_WAIT = 20,
-    MAX_LONG_TELEPORTS_PER_CYCLE = 2, -- Max 2 long jumps before cooldown
+    MAX_LONG_TELEPORTS_PER_CYCLE = 2, -- Max 2 long teleports before cooldown
 }
 
 local isRunning = false
@@ -230,3 +230,4 @@ local function processTarget(part, prompt, isLimited)
     else
         -- Unlimited (bypass counter) - not used for main targets currently
         local hrp = ensureHRP
+
