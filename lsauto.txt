@@ -19,7 +19,15 @@ local isRunning = false
 local startupComplete = false
 local longTeleportCount = 0
 
--- GUI Setup
+-- Precomputed squared distance threshold
+local LOAD_DIST_SQ = CONFIG.LOAD_DISTANCE_THRESHOLD * CONFIG.LOAD_DISTANCE_THRESHOLD
+
+-- Constant target positions reused (no functional change)
+local COOLDOWN_POS = Vector3.new(1034, -5, 174)
+local BANK_POS = Vector3.new(917, 3, 2589)
+local STARTUP_POS = Vector3.new(980, 2, 541)
+local MUSEUM_POS = Vector3.new(109, 3, 1866)
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "BankAuto"
 screenGui.ResetOnSpawn = false
@@ -37,21 +45,28 @@ button.Parent = screenGui
 
 Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
 
-function updateButton()
-    if isRunning then
-        button.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
-        button.Text = "STOP"
-    else
-        button.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
-        button.Text = "START AUTO"
+local function setButtonText(txt)
+    if button.Text ~= txt then
+        button.Text = txt
     end
 end
 
-function resetCamera()
-    camera.CameraType = Enum.CameraType.Custom
+function updateButton()
+    if isRunning then
+        button.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
+        setButtonText("STOP")
+    else
+        button.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+        setButtonText("START AUTO")
+    end
 end
 
--- Ensure HRP exists
+local function resetCamera()
+    if camera.CameraType ~= Enum.CameraType.Custom then
+        camera.CameraType = Enum.CameraType.Custom
+    end
+end
+
 local function getHRP()
     local char = player.Character
     if char then
@@ -69,14 +84,17 @@ local function ensureHRP()
     return nil
 end
 
--- Check if position is far ( >200 studs)
+local function distSq(a, b)
+    local dx, dy, dz = a.X - b.X, a.Y - b.Y, a.Z - b.Z
+    return dx*dx + dy*dy + dz*dz
+end
+
 local function isLongTeleport(targetPos)
     local hrp = getHRP()
     if not hrp then return false end
-    return (hrp.Position - targetPos).Magnitude > CONFIG.LOAD_DISTANCE_THRESHOLD
+    return distSq(hrp.Position, targetPos) > LOAD_DIST_SQ
 end
 
--- Standard teleport (no limit tracking - for cooldown/startup)
 local function tpCoords(pos)
     local hrp = ensureHRP()
     if not hrp then return false end
@@ -84,48 +102,46 @@ local function tpCoords(pos)
     return true
 end
 
--- Limited teleport (tracks >200 stud jumps)
 local function tpLimited(pos)
     local hrp = ensureHRP()
     if not hrp then return false, "NO_HRP" end
-    
-    local distance = (hrp.Position - pos).Magnitude
-    
-    -- Check if this counts as a long teleport
-    if distance > CONFIG.LOAD_DISTANCE_THRESHOLD then
+
+    local distanceSq = distSq(hrp.Position, pos)
+
+    if distanceSq > LOAD_DIST_SQ then
         if longTeleportCount >= CONFIG.MAX_LONG_TELEPORTS then
-            button.Text = "LIMIT REACHED"
+            setButtonText("LIMIT REACHED")
             return false, "LIMIT_HIT"
         end
         longTeleportCount = longTeleportCount + 1
-        
-        -- Wait for area load
-        button.Text = "LOADING..."
+
+        setButtonText("LOADING...")
         task.wait(CONFIG.LOAD_WAIT_TIME)
     end
-    
+
     hrp.CFrame = CFrame.new(pos.X, pos.Y, pos.Z)
     return true, "OK"
 end
 
--- Part teleport with camera (tracks distance too)
 local function tpToPart(part)
     local hrp = ensureHRP()
     if not hrp or not part then return false, "INVALID" end
-    
-    local distance = (hrp.Position - part.Position).Magnitude
-    
-    if distance > CONFIG.LOAD_DISTANCE_THRESHOLD then
+
+    local distanceSq = distSq(hrp.Position, part.Position)
+
+    if distanceSq > LOAD_DIST_SQ then
         if longTeleportCount >= CONFIG.MAX_LONG_TELEPORTS then
             return false, "LIMIT_HIT"
         end
         longTeleportCount = longTeleportCount + 1
     end
-    
+
     hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
-    camera.CameraType = Enum.CameraType.Scriptable
+    if camera.CameraType ~= Enum.CameraType.Scriptable then
+        camera.CameraType = Enum.CameraType.Scriptable
+    end
     camera.CFrame = CFrame.new(part.Position + Vector3.new(0, 4, 0), part.Position)
-    
+
     return true, "OK"
 end
 
@@ -139,11 +155,10 @@ local function spamPrompt(prompt)
     local start = tick()
     while isRunning and (tick() - start) < CONFIG.PROCESS_DURATION do
         firePrompt(prompt)
-        task.wait()
+        task.wait(CONFIG.SPAM_DELAY)
     end
 end
 
--- Get Bank Button
 local function getBankButton()
     local bank = workspace:FindFirstChild("BANK")
     if not bank then return nil, nil end
@@ -154,27 +169,27 @@ local function getBankButton()
     return pPart:FindFirstChild("ProximityPrompt"), pPart
 end
 
--- Get Nearest Money
 local function getNearestMoney()
     local bank = workspace:FindFirstChild("BANK")
     if not bank then return nil, nil end
     local boxes = bank:FindFirstChild("MoneyBoxes")
     if not boxes then return nil, nil end
-    
+
     local hrp = getHRP()
     if not hrp then return nil, nil end
-    
+
     local hrpPos = hrp.Position
     local nearestPrompt, nearestPart, shortestDist = nil, nil, math.huge
-    
-    for _, box in ipairs(boxes:GetChildren()) do
+
+    local children = boxes:GetChildren()
+    for _, box in ipairs(children) do
         local pp = box:FindFirstChild("PromptPart")
         if pp then
             local prompt = pp:FindFirstChild("ProximityPrompt")
             if prompt and prompt.Enabled then
-                local dist = (hrpPos - pp.Position).Magnitude
-                if dist < shortestDist then
-                    shortestDist = dist
+                local d = distSq(hrpPos, pp.Position)
+                if d < shortestDist then
+                    shortestDist = d
                     nearestPrompt = prompt
                     nearestPart = pp
                 end
@@ -184,7 +199,6 @@ local function getNearestMoney()
     return nearestPrompt, nearestPart
 end
 
--- Check Museum Door
 local function isMuseumOpen()
     local museum = workspace:FindFirstChild("MUSEUM")
     if not museum then return false end
@@ -194,27 +208,27 @@ local function isMuseumOpen()
     return true
 end
 
--- Get Nearest Art
 local function getNearestArt()
     local museum = workspace:FindFirstChild("MUSEUM")
     if not museum then return nil, nil end
     local artFolder = museum:FindFirstChild("Art")
     if not artFolder then return nil, nil end
-    
+
     local hrp = getHRP()
     if not hrp then return nil, nil end
-    
+
     local hrpPos = hrp.Position
     local nearestPrompt, nearestPart, shortestDist = nil, nil, math.huge
-    
-    for _, artModel in ipairs(artFolder:GetChildren()) do
+
+    local children = artFolder:GetChildren()
+    for _, artModel in ipairs(children) do
         local mainPart = artModel:FindFirstChild("MainPart")
         if mainPart then
             local prompt = mainPart:FindFirstChild("ProximityPrompt")
             if prompt and prompt.Enabled then
-                local dist = (hrpPos - mainPart.Position).Magnitude
-                if dist < shortestDist then
-                    shortestDist = dist
+                local d = distSq(hrpPos, mainPart.Position)
+                if d < shortestDist then
+                    shortestDist = d
                     nearestPrompt = prompt
                     nearestPart = mainPart
                 end
@@ -224,120 +238,107 @@ local function getNearestArt()
     return nearestPrompt, nearestPart
 end
 
--- Process target (robbery)
 local function processTarget(part, prompt)
     if not isRunning then return false end
-    
+
     local ok, status = tpToPart(part)
     if not ok then return false, status end
-    
+
     local originalHold = prompt.HoldDuration
     prompt.HoldDuration = 0
-    
+
     spamPrompt(prompt)
-    
+
     if prompt.Parent then
         prompt.HoldDuration = originalHold
     end
-    
+
     return true
 end
 
--- Cooldown sequence
 local function doCooldown()
     if not isRunning then return end
-    
+
     resetCamera()
-    tpCoords(Vector3.new(1034, -5, 174)) -- Cooldown spot (no limit)
-    button.Text = "COOLDOWN"
+    tpCoords(COOLDOWN_POS)
+    setButtonText("COOLDOWN")
     task.wait(CONFIG.COOLDOWN_TIME)
-    
-    -- Reset counter for next cycle
+
     longTeleportCount = 0
-    
-    -- Return to bank (this will be count 1 of next cycle if >200)
+
     if isRunning then
-        tpLimited(Vector3.new(917, 3, 2589))
+        tpLimited(BANK_POS)
         task.wait(CONFIG.CHECK_LOAD_TIME)
     end
 end
 
--- Main Logic
 local function autoRob()
-    -- Reset counter at start
     longTeleportCount = 0
-    
-    -- INITIAL STARTUP (bypasses limit)
+
     if not startupComplete then
-        button.Text = "STARTUP"
-        
-        tpCoords(Vector3.new(980, 2, 541))
+        setButtonText("STARTUP")
+
+        tpCoords(STARTUP_POS)
         task.wait(CONFIG.STARTUP_WAIT_1)
-        
+
         if isRunning then
-            tpCoords(Vector3.new(917, 3, 2589))
+            tpCoords(BANK_POS)
             task.wait(CONFIG.STARTUP_WAIT_2)
         end
-        
+
         startupComplete = true
         longTeleportCount = 0
     end
-    
-    -- Main loop
+
     while isRunning do
         local limitReached = false
-        
-        -- PHASE 1: BANK
-        button.Text = "CHECK BANK"
-        local success, status = tpLimited(Vector3.new(917, 3, 2589))
-        
+
+        setButtonText("CHECK BANK")
+        local success, status = tpLimited(BANK_POS)
+
         if not success and status == "LIMIT_HIT" then
-            -- Can't reach bank, go cooldown immediately
             doCooldown()
         else
             task.wait(CONFIG.CHECK_LOAD_TIME)
-            
+
             local btnPrompt, btnPart = getBankButton()
             local moneyExists = getNearestMoney()
-            
+
             if (btnPrompt and btnPrompt.Enabled) or moneyExists then
-                
-                -- Button available?
+
                 if btnPrompt and btnPrompt.Enabled then
-                    button.Text = "BUTTON"
+                    setButtonText("BUTTON")
                     processTarget(btnPart, btnPrompt)
-                    
-                    -- 10-second money mode
+
                     local startTime = tick()
                     while isRunning do
                         local elapsed = tick() - startTime
                         local mPrompt, mPart = getNearestMoney()
-                        
+
                         if mPrompt then
-                            button.Text = "MONEY"
+                            setButtonText("MONEY")
                             local ok, stat = processTarget(mPart, mPrompt)
                             if not ok and stat == "LIMIT_HIT" then
                                 limitReached = true
-                                break -- Exit money loop, go to cooldown
+                                break
                             end
                             task.wait()
                         else
                             if elapsed >= CONFIG.BUTTON_MONEY_WAIT then
                                 break
                             else
-                                button.Text = "WAIT " .. math.ceil(CONFIG.BUTTON_MONEY_WAIT - elapsed)
+                                setButtonText("WAIT " .. math.ceil(CONFIG.BUTTON_MONEY_WAIT - elapsed))
                                 task.wait(0.5)
                             end
                         end
                     end
-                    
+
                 elseif moneyExists then
-                    -- No button, just money
                     while isRunning do
                         local mPrompt, mPart = getNearestMoney()
                         if not mPrompt then break end
-                        
-                        button.Text = "MONEY"
+
+                        setButtonText("MONEY")
                         local ok, stat = processTarget(mPart, mPrompt)
                         if not ok and stat == "LIMIT_HIT" then
                             limitReached = true
@@ -347,32 +348,30 @@ local function autoRob()
                     end
                 end
             end
-            
-            -- PHASE 2: MUSEUM (only if limit not reached)
+
             if isRunning and not limitReached then
-                button.Text = "CHECK MUSEUM"
-                local ok2, stat2 = tpLimited(Vector3.new(109, 3, 1866))
-                
+                setButtonText("CHECK MUSEUM")
+                local ok2, stat2 = tpLimited(MUSEUM_POS)
+
                 if not ok2 and stat2 == "LIMIT_HIT" then
                     limitReached = true
                 else
                     task.wait(CONFIG.CHECK_LOAD_TIME)
-                    
+
                     if isMuseumOpen() then
                         local artPrompt, artPart = getNearestArt()
-                        
+
                         if artPrompt then
-                            button.Text = "ART"
+                            setButtonText("ART")
                             local ok3, stat3 = processTarget(artPart, artPrompt)
                             if not ok3 and stat3 == "LIMIT_HIT" then
                                 limitReached = true
                             else
-                                -- Process remaining art pieces
                                 while isRunning and not limitReached do
                                     local nextPrompt, nextPart = getNearestArt()
                                     if not nextPrompt then break end
-                                    
-                                    button.Text = "ART"
+
+                                    setButtonText("ART")
                                     local ok4, stat4 = processTarget(nextPart, nextPrompt)
                                     if not ok4 and stat4 == "LIMIT_HIT" then
                                         limitReached = true
@@ -382,32 +381,30 @@ local function autoRob()
                                 end
                             end
                         else
-                            button.Text = "NO ART"
+                            setButtonText("NO ART")
                             task.wait(0.5)
                         end
                     else
-                        button.Text = "DOOR CLOSED"
+                        setButtonText("DOOR CLOSED")
                         task.wait(1)
                     end
                 end
             end
-            
-            -- PHASE 3: COOLDOWN (always happens after processing, or if limit hit)
+
             if isRunning then
                 doCooldown()
             end
         end
     end
-    
+
     resetCamera()
     updateButton()
-    button.Text = "START AUTO"
+    setButtonText("START AUTO")
 end
 
--- Toggle
 button.MouseButton1Click:Connect(function()
     isRunning = not isRunning
-    
+
     if isRunning then
         updateButton()
         task.spawn(autoRob)
@@ -417,16 +414,9 @@ button.MouseButton1Click:Connect(function()
     end
 end)
 
--- Handle death
 player.CharacterAdded:Connect(function(char)
     resetCamera()
     task.spawn(function()
         char:WaitForChild("HumanoidRootPart", 5)
     end)
 end)
-
-print("[AUTO] Loaded")
-
-
-
-
