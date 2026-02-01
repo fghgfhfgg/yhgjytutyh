@@ -6,7 +6,7 @@ local CONFIG = {
     SPAM_DELAY = 0.02,
     PROCESS_DURATION = 0.3,
     CHECK_LOAD_TIME = 0,
-    COOLDOWN_TIME = 10,
+    COOLDOWN_TIME = 9,
     STARTUP_WAIT_1 = 1,
     STARTUP_WAIT_2 = 0,
     LOAD_DISTANCE_THRESHOLD = 200,
@@ -426,6 +426,7 @@ player.CharacterAdded:Connect(function(char)
 end)
 
 print("[AUTO] Loaded")
+
 
 
 
