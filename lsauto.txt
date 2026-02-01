@@ -7,11 +7,11 @@ local CONFIG = {
     PROCESS_DURATION = 0.3,
     CHECK_LOAD_TIME = 0,
     COOLDOWN_TIME = 10,
-    STARTUP_WAIT_1 = 2,
-    STARTUP_WAIT_2 = 2,
+    STARTUP_WAIT_1 = 1,
+    STARTUP_WAIT_2 = 0,
     LOAD_DISTANCE_THRESHOLD = 200,
     LOAD_WAIT_TIME = 1,
-    BUTTON_MONEY_WAIT = 10,
+    BUTTON_MONEY_WAIT = 20,
     MAX_LONG_TELEPORTS = 2,
 }
 
@@ -426,4 +426,5 @@ player.CharacterAdded:Connect(function(char)
 end)
 
 print("[AUTO] Loaded")
+
 
