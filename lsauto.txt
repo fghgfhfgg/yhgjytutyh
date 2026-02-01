@@ -139,7 +139,7 @@ local function spamPrompt(prompt)
     local start = tick()
     while isRunning and (tick() - start) < CONFIG.PROCESS_DURATION do
         firePrompt(prompt)
-        task.wait(CONFIG.SPAM_DELAY)
+        task.wait()
     end
 end
 
@@ -248,7 +248,7 @@ local function doCooldown()
     if not isRunning then return end
     
     resetCamera()
-    tpCoords(Vector3.new(1034, -2, 174)) -- Cooldown spot (no limit)
+    tpCoords(Vector3.new(1034, -5, 174)) -- Cooldown spot (no limit)
     button.Text = "COOLDOWN"
     task.wait(CONFIG.COOLDOWN_TIME)
     
@@ -426,5 +426,6 @@ player.CharacterAdded:Connect(function(char)
 end)
 
 print("[AUTO] Loaded")
+
 
 
