@@ -1,4 +1,7 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
@@ -12,7 +15,8 @@ local CONFIG = {
     LOAD_DISTANCE_THRESHOLD = 200,
     LOAD_WAIT_TIME = 1,
     BUTTON_MONEY_WAIT = 20,
-    MAX_LONG_TELEPORTS = 2,
+    MAX_LONG_TELEPORTS = 4,
+    RESET_ATTEMPT_INTERVAL = 0.3,
 }
 
 local isRunning = false
@@ -23,7 +27,6 @@ local longTeleportCount = 0
 local LOAD_DIST_SQ = CONFIG.LOAD_DISTANCE_THRESHOLD * CONFIG.LOAD_DISTANCE_THRESHOLD
 
 -- Constant target positions reused (no functional change)
-local COOLDOWN_POS = Vector3.new(1034, -5, 174)
 local BANK_POS = Vector3.new(917, 3, 2589)
 local STARTUP_POS = Vector3.new(980, 2, 541)
 local MUSEUM_POS = Vector3.new(109, 3, 1866)
@@ -71,6 +74,14 @@ local function getHRP()
     local char = player.Character
     if char then
         return char:FindFirstChild("HumanoidRootPart")
+    end
+    return nil
+end
+
+local function getHumanoid()
+    local char = player.Character
+    if char then
+        return char:FindFirstChild("Humanoid")
     end
     return nil
 end
@@ -256,11 +267,44 @@ local function processTarget(part, prompt)
     return true
 end
 
+local function resetCharacter()
+    local WeaponEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("WeaponEvent")
+    WeaponEvent:FireServer("Reset")
+end
+
 local function doCooldown()
     if not isRunning then return end
 
+    setButtonText("RESETTING")
+    
+    -- Attempt reset every CONFIG.RESET_ATTEMPT_INTERVAL until health hits 0 or character changes
+    while isRunning do
+        local humanoid = getHumanoid()
+        if humanoid and humanoid.Health <= 0 then
+            break -- Stop resetting once health hits 0
+        end
+        
+        resetCharacter()
+        task.wait(CONFIG.RESET_ATTEMPT_INTERVAL)
+    end
+    
+    -- Wait for new character to spawn and fully load
+    local char = player.Character
+    if not char then
+        player.CharacterAdded:Wait()
+        char = player.Character
+    end
+    
+    if char then
+        char:WaitForChild("HumanoidRootPart", 5)
+        char:WaitForChild("Humanoid", 5)
+    end
+    
+    -- Reset camera properly
     resetCamera()
-    tpCoords(COOLDOWN_POS)
+    camera.CameraSubject = char and char:FindFirstChild("Humanoid") or nil
+
+    -- Now start the cooldown timer after respawn is confirmed
     setButtonText("COOLDOWN")
     task.wait(CONFIG.COOLDOWN_TIME)
 
@@ -382,7 +426,7 @@ local function autoRob()
                             end
                         else
                             setButtonText("NO ART")
-                            task.wait(0.5)
+                            task.wait(0.1)
                         end
                     else
                         setButtonText("DOOR CLOSED")
