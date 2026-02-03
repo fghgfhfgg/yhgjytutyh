@@ -15,7 +15,7 @@ local CONFIG = {
     LOAD_DISTANCE_THRESHOLD = 200,
     LOAD_WAIT_TIME = 1,
     BUTTON_MONEY_WAIT = 20,
-    MAX_LONG_TELEPORTS = 4,
+    MAX_LONG_TELEPORTS = 2,
     RESET_ATTEMPT_INTERVAL = 0.3,
 }
 
@@ -464,3 +464,4 @@ player.CharacterAdded:Connect(function(char)
         char:WaitForChild("HumanoidRootPart", 5)
     end)
 end)
+
