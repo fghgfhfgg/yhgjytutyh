@@ -1,32 +1,32 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local StarterGui = game:GetService("StarterGui")
-local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
+local task_wait = task.wait
 
 local CONFIG = {
-    SPAM_DELAY = 0.02,
+    SPAM_DELAY = 0.05,
     PROCESS_DURATION = 0.3,
     CHECK_LOAD_TIME = 0,
     COOLDOWN_TIME = 9,
     STARTUP_WAIT_1 = 1,
     STARTUP_WAIT_2 = 0,
-    LOAD_DISTANCE_THRESHOLD = 200,
-    LOAD_WAIT_TIME = 1,
     BUTTON_MONEY_WAIT = 20,
     MAX_LONG_TELEPORTS = 2,
-    RESET_ATTEMPT_INTERVAL = 0.3,
+    RESET_ATTEMPT_INTERVAL = 0.2,
+    RESET_TIMEOUT = 10,
+    MUSEUM_ROB_TIMEOUT = 30,
+    BANK_ROB_TIMEOUT = 60,
 }
 
 local isRunning = false
 local startupComplete = false
+
 local longTeleportCount = 0
+local cooldownAllowed = true
+local longTeleportsSinceReset = 0
+local REQUIRED_LONG_TELEPORTS_AFTER_RESET = 2
 
--- Precomputed squared distance threshold
-local LOAD_DIST_SQ = CONFIG.LOAD_DISTANCE_THRESHOLD * CONFIG.LOAD_DISTANCE_THRESHOLD
-
--- Constant target positions reused (no functional change)
 local BANK_POS = Vector3.new(917, 3, 2589)
 local STARTUP_POS = Vector3.new(980, 2, 541)
 local MUSEUM_POS = Vector3.new(109, 3, 1866)
@@ -54,7 +54,7 @@ local function setButtonText(txt)
     end
 end
 
-function updateButton()
+local function updateButton()
     if isRunning then
         button.BackgroundColor3 = Color3.fromRGB(231, 76, 60)
         setButtonText("STOP")
@@ -70,27 +70,21 @@ local function resetCamera()
     end
 end
 
-local function getHRP()
+local function getHRP(timeout)
+    timeout = timeout or 5
     local char = player.Character
     if char then
-        return char:FindFirstChild("HumanoidRootPart")
-    end
-    return nil
-end
-
-local function getHumanoid()
-    local char = player.Character
-    if char then
-        return char:FindFirstChild("Humanoid")
-    end
-    return nil
-end
-
-local function ensureHRP()
-    while isRunning do
-        local hrp = getHRP()
+        local hrp = char:FindFirstChild("HumanoidRootPart")
         if hrp then return hrp end
-        task.wait(0.1)
+    end
+    local start = tick()
+    while tick() - start < timeout do
+        char = player.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then return hrp end
+        end
+        task_wait(0.1)
     end
     return nil
 end
@@ -100,73 +94,80 @@ local function distSq(a, b)
     return dx*dx + dy*dy + dz*dz
 end
 
-local function isLongTeleport(targetPos)
-    local hrp = getHRP()
-    if not hrp then return false end
-    return distSq(hrp.Position, targetPos) > LOAD_DIST_SQ
+local lastTeleportName = nil
+local function isLongTeleportPair(fromName, toName)
+    if not fromName or not toName then return false end
+    local key = fromName .. "," .. toName
+    local longPairs = {
+        ["STARTUP,BANK"] = true, ["BANK,STARTUP"] = true,
+        ["STARTUP,MUSEUM"] = true, ["MUSEUM,STARTUP"] = true,
+        ["BANK,MUSEUM"] = true, ["MUSEUM,BANK"] = true,
+    }
+    return longPairs[key] == true
 end
 
-local function tpCoords(pos)
-    local hrp = ensureHRP()
-    if not hrp then return false end
-    hrp.CFrame = CFrame.new(pos.X, pos.Y, pos.Z)
-    return true
-end
-
-local function tpLimited(pos)
-    local hrp = ensureHRP()
+local function teleportToCoords(pos, teleportName)
+    local hrp = getHRP(5)
     if not hrp then return false, "NO_HRP" end
 
-    local distanceSq = distSq(hrp.Position, pos)
+    if lastTeleportName and teleportName and isLongTeleportPair(lastTeleportName, teleportName) then
+        longTeleportCount = longTeleportCount + 1
+        if not cooldownAllowed then
+            longTeleportsSinceReset = longTeleportsSinceReset + 1
+            if longTeleportsSinceReset >= REQUIRED_LONG_TELEPORTS_AFTER_RESET then
+                cooldownAllowed = true
+                longTeleportsSinceReset = 0
+                longTeleportCount = 0
+            end
+        end
 
-    if distanceSq > LOAD_DIST_SQ then
-        if longTeleportCount >= CONFIG.MAX_LONG_TELEPORTS then
-            setButtonText("LIMIT REACHED")
+        if longTeleportCount > CONFIG.MAX_LONG_TELEPORTS then
             return false, "LIMIT_HIT"
         end
-        longTeleportCount = longTeleportCount + 1
-
-        setButtonText("LOADING...")
-        task.wait(CONFIG.LOAD_WAIT_TIME)
     end
 
     hrp.CFrame = CFrame.new(pos.X, pos.Y, pos.Z)
+    lastTeleportName = teleportName
     return true, "OK"
 end
 
-local function tpToPart(part)
-    local hrp = ensureHRP()
+local function teleportToPartAndLook(part, teleportName)
+    local hrp = getHRP(5)
     if not hrp or not part then return false, "INVALID" end
 
-    local distanceSq = distSq(hrp.Position, part.Position)
+    if lastTeleportName and teleportName and isLongTeleportPair(lastTeleportName, teleportName) then
+        longTeleportCount = longTeleportCount + 1
+        if not cooldownAllowed then
+            longTeleportsSinceReset = longTeleportsSinceReset + 1
+            if longTeleportsSinceReset >= REQUIRED_LONG_TELEPORTS_AFTER_RESET then
+                cooldownAllowed = true
+                longTeleportsSinceReset = 0
+                longTeleportCount = 0
+            end
+        end
 
-    if distanceSq > LOAD_DIST_SQ then
-        if longTeleportCount >= CONFIG.MAX_LONG_TELEPORTS then
+        if longTeleportCount > CONFIG.MAX_LONG_TELEPORTS then
             return false, "LIMIT_HIT"
         end
-        longTeleportCount = longTeleportCount + 1
     end
 
     hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+
     if camera.CameraType ~= Enum.CameraType.Scriptable then
         camera.CameraType = Enum.CameraType.Scriptable
     end
     camera.CFrame = CFrame.new(part.Position + Vector3.new(0, 4, 0), part.Position)
 
+    lastTeleportName = teleportName
     return true, "OK"
 end
 
-local function firePrompt(prompt)
-    if not prompt or not prompt:IsA("ProximityPrompt") then return end
-    fireproximityprompt(prompt)
-end
-
 local function spamPrompt(prompt)
-    if not prompt then return end
-    local start = tick()
-    while isRunning and (tick() - start) < CONFIG.PROCESS_DURATION do
-        firePrompt(prompt)
-        task.wait(CONFIG.SPAM_DELAY)
+    if not prompt or not prompt:IsA("ProximityPrompt") then return end
+    local startT = tick()
+    while isRunning and (tick() - startT) < CONFIG.PROCESS_DURATION do
+        pcall(function() fireproximityprompt(prompt) end)
+        task_wait(CONFIG.SPAM_DELAY)
     end
 end
 
@@ -186,14 +187,13 @@ local function getNearestMoney()
     local boxes = bank:FindFirstChild("MoneyBoxes")
     if not boxes then return nil, nil end
 
-    local hrp = getHRP()
+    local hrp = getHRP(1)
     if not hrp then return nil, nil end
 
     local hrpPos = hrp.Position
     local nearestPrompt, nearestPart, shortestDist = nil, nil, math.huge
 
-    local children = boxes:GetChildren()
-    for _, box in ipairs(children) do
+    for _, box in ipairs(boxes:GetChildren()) do
         local pp = box:FindFirstChild("PromptPart")
         if pp then
             local prompt = pp:FindFirstChild("ProximityPrompt")
@@ -225,14 +225,13 @@ local function getNearestArt()
     local artFolder = museum:FindFirstChild("Art")
     if not artFolder then return nil, nil end
 
-    local hrp = getHRP()
+    local hrp = getHRP(1)
     if not hrp then return nil, nil end
 
     local hrpPos = hrp.Position
     local nearestPrompt, nearestPart, shortestDist = nil, nil, math.huge
 
-    local children = artFolder:GetChildren()
-    for _, artModel in ipairs(children) do
+    for _, artModel in ipairs(artFolder:GetChildren()) do
         local mainPart = artModel:FindFirstChild("MainPart")
         if mainPart then
             local prompt = mainPart:FindFirstChild("ProximityPrompt")
@@ -249,10 +248,10 @@ local function getNearestArt()
     return nearestPrompt, nearestPart
 end
 
-local function processTarget(part, prompt)
+local function processTarget(part, prompt, teleportName)
     if not isRunning then return false end
 
-    local ok, status = tpToPart(part)
+    local ok, status = teleportToPartAndLook(part, teleportName)
     if not ok then return false, status end
 
     local originalHold = prompt.HoldDuration
@@ -264,70 +263,94 @@ local function processTarget(part, prompt)
         prompt.HoldDuration = originalHold
     end
 
-    return true
+    return true, "OK"
 end
 
 local function resetCharacter()
-    local WeaponEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("WeaponEvent")
-    WeaponEvent:FireServer("Reset")
+    local events = ReplicatedStorage:FindFirstChild("Events")
+    if not events then return end
+    local WeaponEvent = events:FindFirstChild("WeaponEvent")
+    if WeaponEvent then
+        pcall(function() WeaponEvent:FireServer("Reset") end)
+    end
 end
 
-local function doCooldown()
+local function doCooldown(forceTeleportMuseum)
     if not isRunning then return end
 
+    if not cooldownAllowed then
+        setButtonText("RESET BLOCKED")
+        return
+    end
+
+    cooldownAllowed = false
+    longTeleportsSinceReset = 0
+
     setButtonText("RESETTING")
-    
-    -- Attempt reset every CONFIG.RESET_ATTEMPT_INTERVAL until health hits 0 or character changes
+
+    if forceTeleportMuseum then
+        setButtonText("TIMEOUT - TP MUSEUM")
+        teleportToCoords(MUSEUM_POS, "MUSEUM")
+        task_wait(0.5)
+    end
+
+    local resetStartTime = tick()
+    local resetTimedOut = false
+
     while isRunning do
-        local humanoid = getHumanoid()
-        if humanoid and humanoid.Health <= 0 then
-            break -- Stop resetting once health hits 0
+        if (tick() - resetStartTime) >= CONFIG.RESET_TIMEOUT then
+            resetTimedOut = true
+            break
         end
-        
+
+        local humanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+        if humanoid and humanoid.Health <= 0 then
+            break
+        end
+
         resetCharacter()
-        task.wait(CONFIG.RESET_ATTEMPT_INTERVAL)
+        task_wait(CONFIG.RESET_ATTEMPT_INTERVAL)
     end
-    
-    -- Wait for new character to spawn and fully load
-    local char = player.Character
-    if not char then
+
+    if resetTimedOut then
+        setButtonText("RESET TIMEOUT")
+        teleportToCoords(MUSEUM_POS, "MUSEUM")
+        task_wait(0.5)
+        resetCharacter()
+        task_wait(0.5)
+    end
+
+    if not player.Character then
         player.CharacterAdded:Wait()
-        char = player.Character
     end
-    
+
+    local char = player.Character
     if char then
         char:WaitForChild("HumanoidRootPart", 5)
         char:WaitForChild("Humanoid", 5)
     end
-    
-    -- Reset camera properly
+
     resetCamera()
     camera.CameraSubject = char and char:FindFirstChild("Humanoid") or nil
 
-    -- Now start the cooldown timer after respawn is confirmed
     setButtonText("COOLDOWN")
-    task.wait(CONFIG.COOLDOWN_TIME)
-
-    longTeleportCount = 0
-
-    if isRunning then
-        tpLimited(BANK_POS)
-        task.wait(CONFIG.CHECK_LOAD_TIME)
-    end
+    task_wait(CONFIG.COOLDOWN_TIME)
 end
 
 local function autoRob()
     longTeleportCount = 0
+    lastTeleportName = nil
+    longTeleportsSinceReset = 0
+    cooldownAllowed = true
 
     if not startupComplete then
         setButtonText("STARTUP")
-
-        tpCoords(STARTUP_POS)
-        task.wait(CONFIG.STARTUP_WAIT_1)
+        teleportToCoords(STARTUP_POS, "STARTUP")
+        task_wait(CONFIG.STARTUP_WAIT_1)
 
         if isRunning then
-            tpCoords(BANK_POS)
-            task.wait(CONFIG.STARTUP_WAIT_2)
+            teleportToCoords(BANK_POS, "BANK")
+            task_wait(CONFIG.STARTUP_WAIT_2)
         end
 
         startupComplete = true
@@ -338,105 +361,156 @@ local function autoRob()
         local limitReached = false
 
         setButtonText("CHECK BANK")
-        local success, status = tpLimited(BANK_POS)
+        local ok, status = teleportToCoords(BANK_POS, "BANK")
 
-        if not success and status == "LIMIT_HIT" then
-            doCooldown()
+        if not ok and status == "LIMIT_HIT" then
+            if cooldownAllowed then
+                doCooldown()
+            else
+                setButtonText("WAIT TELEPORTS")
+                task_wait(1)
+            end
         else
-            task.wait(CONFIG.CHECK_LOAD_TIME)
+            task_wait(CONFIG.CHECK_LOAD_TIME)
 
             local btnPrompt, btnPart = getBankButton()
-            local moneyExists = getNearestMoney()
+            local mPrompt, mPart = getNearestMoney()
 
-            if (btnPrompt and btnPrompt.Enabled) or moneyExists then
+            if (btnPrompt and btnPrompt.Enabled) or mPrompt then
+                local bankStartTime = tick()
+                local bankTimedOut = false
 
                 if btnPrompt and btnPrompt.Enabled then
                     setButtonText("BUTTON")
-                    processTarget(btnPart, btnPrompt)
+                    processTarget(btnPart, btnPrompt, "BANK")
 
                     local startTime = tick()
                     while isRunning do
-                        local elapsed = tick() - startTime
-                        local mPrompt, mPart = getNearestMoney()
+                        if (tick() - bankStartTime) >= CONFIG.BANK_ROB_TIMEOUT then
+                            bankTimedOut = true
+                            setButtonText("BANK TIMEOUT")
+                            break
+                        end
 
-                        if mPrompt then
+                        local mPrompt2, mPart2 = getNearestMoney()
+                        if mPrompt2 then
                             setButtonText("MONEY")
-                            local ok, stat = processTarget(mPart, mPrompt)
-                            if not ok and stat == "LIMIT_HIT" then
+                            local ok2, stat2 = processTarget(mPart2, mPrompt2, "BANK")
+                            if not ok2 and stat2 == "LIMIT_HIT" then
                                 limitReached = true
                                 break
                             end
-                            task.wait()
+                            task_wait()
                         else
+                            local elapsed = tick() - startTime
                             if elapsed >= CONFIG.BUTTON_MONEY_WAIT then
                                 break
                             else
                                 setButtonText("WAIT " .. math.ceil(CONFIG.BUTTON_MONEY_WAIT - elapsed))
-                                task.wait(0.5)
+                                task_wait(0.5)
                             end
                         end
                     end
 
-                elseif moneyExists then
+                elseif mPrompt then
                     while isRunning do
-                        local mPrompt, mPart = getNearestMoney()
-                        if not mPrompt then break end
+                        if (tick() - bankStartTime) >= CONFIG.BANK_ROB_TIMEOUT then
+                            bankTimedOut = true
+                            setButtonText("BANK TIMEOUT")
+                            break
+                        end
+
+                        local mPrompt2, mPart2 = getNearestMoney()
+                        if not mPrompt2 then break end
 
                         setButtonText("MONEY")
-                        local ok, stat = processTarget(mPart, mPrompt)
-                        if not ok and stat == "LIMIT_HIT" then
+                        local ok2, stat2 = processTarget(mPart2, mPrompt2, "BANK")
+                        if not ok2 and stat2 == "LIMIT_HIT" then
                             limitReached = true
                             break
                         end
-                        task.wait()
+                        task_wait()
                     end
+                end
+
+                if bankTimedOut then
+                    if cooldownAllowed then
+                        doCooldown(true)
+                    else
+                        setButtonText("WAIT TELEPORTS")
+                        task_wait(1)
+                    end
+                    continue
                 end
             end
 
             if isRunning and not limitReached then
                 setButtonText("CHECK MUSEUM")
-                local ok2, stat2 = tpLimited(MUSEUM_POS)
+                local ok2, stat2 = teleportToCoords(MUSEUM_POS, "MUSEUM")
 
                 if not ok2 and stat2 == "LIMIT_HIT" then
                     limitReached = true
                 else
-                    task.wait(CONFIG.CHECK_LOAD_TIME)
+                    task_wait(CONFIG.CHECK_LOAD_TIME)
 
                     if isMuseumOpen() then
                         local artPrompt, artPart = getNearestArt()
+                        local museumStartTime = tick()
+                        local museumTimedOut = false
 
                         if artPrompt then
                             setButtonText("ART")
-                            local ok3, stat3 = processTarget(artPart, artPrompt)
+                            local ok3, stat3 = processTarget(artPart, artPrompt, "MUSEUM")
                             if not ok3 and stat3 == "LIMIT_HIT" then
                                 limitReached = true
                             else
                                 while isRunning and not limitReached do
+                                    if (tick() - museumStartTime) >= CONFIG.MUSEUM_ROB_TIMEOUT then
+                                        museumTimedOut = true
+                                        setButtonText("MUSEUM TIMEOUT")
+                                        break
+                                    end
+
                                     local nextPrompt, nextPart = getNearestArt()
                                     if not nextPrompt then break end
 
                                     setButtonText("ART")
-                                    local ok4, stat4 = processTarget(nextPart, nextPrompt)
+                                    local ok4, stat4 = processTarget(nextPart, nextPrompt, "MUSEUM")
                                     if not ok4 and stat4 == "LIMIT_HIT" then
                                         limitReached = true
                                         break
                                     end
-                                    task.wait()
+                                    task_wait()
                                 end
+                            end
+
+                            if museumTimedOut then
+                                if cooldownAllowed then
+                                    doCooldown(true)
+                                else
+                                    setButtonText("WAIT TELEPORTS")
+                                    task_wait(1)
+                                end
+                                continue
                             end
                         else
                             setButtonText("NO ART")
-                            task.wait(0.1)
+                            task_wait(0.1)
                         end
                     else
                         setButtonText("DOOR CLOSED")
-                        task.wait(1)
+                        task_wait(1)
                     end
                 end
             end
 
             if isRunning then
-                doCooldown()
+                if cooldownAllowed then
+                    doCooldown()
+                else
+                    setButtonText("WAIT TELEPORTS")
+                    task_wait(1)
+                end
             end
         end
     end
@@ -460,8 +534,4 @@ end)
 
 player.CharacterAdded:Connect(function(char)
     resetCamera()
-    task.spawn(function()
-        char:WaitForChild("HumanoidRootPart", 5)
-    end)
 end)
-
